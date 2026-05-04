@@ -53,7 +53,10 @@ MODEL_WEIGHTS = {
 class EnsembleModel:
     def __init__(self) -> None:
         self.scaler = RobustScaler()
-        self.lstm = LSTMModel()
+        try:
+            self.lstm = LSTMModel()
+        except Exception:
+            self.lstm = None  # type: ignore[assignment]
         self.xgb_clf = None
         self.lgb_clf = None
         self.rf_clf = None
@@ -136,18 +139,19 @@ class EnsembleModel:
 
         metrics: Dict[str, float] = {}
 
-        # --- Train LSTM ---
-        try:
-            X_seq_train, y_seq_train = make_sequences(X_train_scaled, y_train, config.lstm_lookback)
-            X_seq_val, y_seq_val = make_sequences(X_val_scaled, y_val, config.lstm_lookback)
-            if len(X_seq_train) > config.lstm_lookback:
-                self.lstm.train(X_seq_train, y_seq_train, X_seq_val, y_seq_val)
-                lstm_preds = self.lstm.predict_proba(X_seq_val)
-                lstm_acc = ((lstm_preds > 0.5) == y_seq_val).mean()
-                metrics["lstm_val_acc"] = float(lstm_acc)
-                logger.info("LSTM val accuracy: %.4f", lstm_acc)
-        except Exception as e:
-            logger.error("LSTM training failed: %s", e)
+        # --- Train LSTM (optional — skipped if TensorFlow not installed) ---
+        if self.lstm is not None:
+            try:
+                X_seq_train, y_seq_train = make_sequences(X_train_scaled, y_train, config.lstm_lookback)
+                X_seq_val, y_seq_val = make_sequences(X_val_scaled, y_val, config.lstm_lookback)
+                if len(X_seq_train) > config.lstm_lookback:
+                    self.lstm.train(X_seq_train, y_seq_train, X_seq_val, y_seq_val)
+                    lstm_preds = self.lstm.predict_proba(X_seq_val)
+                    lstm_acc = ((lstm_preds > 0.5) == y_seq_val).mean()
+                    metrics["lstm_val_acc"] = float(lstm_acc)
+                    logger.info("LSTM val accuracy: %.4f", lstm_acc)
+            except Exception as e:
+                logger.warning("LSTM training skipped: %s", e)
 
         # --- Train tabular models ---
         if self.xgb_clf is not None:
@@ -211,7 +215,7 @@ class EnsembleModel:
         probs: Dict[str, float] = {}
 
         # LSTM — needs sequence of lookback candles
-        if self.lstm.is_trained and len(X_scaled) >= config.lstm_lookback:
+        if self.lstm is not None and self.lstm.is_trained and len(X_scaled) >= config.lstm_lookback:
             seq = X_scaled[-config.lstm_lookback :][np.newaxis, ...]  # (1, lookback, features)
             try:
                 probs["lstm"] = float(self.lstm.predict_proba(seq)[0])
@@ -267,7 +271,8 @@ class EnsembleModel:
             "feature_cols": self._feature_cols,
         }
         joblib.dump(meta, META_PATH)
-        self.lstm.save()
+        if self.lstm is not None:
+            self.lstm.save()
         logger.info("Ensemble saved to saved_models/")
 
     def load(self) -> bool:
@@ -284,7 +289,8 @@ class EnsembleModel:
             meta = joblib.load(META_PATH)
             self._trained = meta.get("trained", False)
             self._feature_cols = meta.get("feature_cols", [])
-            self.lstm.load()
+            if self.lstm is not None:
+                self.lstm.load()
             logger.info("Ensemble loaded from saved_models/")
             return True
         except Exception as e:

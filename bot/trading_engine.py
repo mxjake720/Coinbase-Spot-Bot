@@ -36,6 +36,9 @@ class TradingEngine:
         self._running = False
         self._last_retrain: float = 0
         self._trade_log: List[Dict] = []
+        self.gui = None  # set by main.py when running with GUI
+        self._last_prices: Dict[str, float] = {}
+        self._total_fees: float = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -55,8 +58,11 @@ class TradingEngine:
 
         # Initial training
         logger.info("Starting initial model training...")
+        self._gui_log("Training ML models — please wait...", "WARNING")
+        self._gui_ml_status("Training...", "Fetching candles and fitting ensemble")
         self.trainer.train_all(force_retrain=False)
         self._last_retrain = time.time()
+        self._gui_ml_status("Active", self._ml_detail_str())
 
         self._running = True
         self._loop()
@@ -91,11 +97,25 @@ class TradingEngine:
             portfolio_usd, self.risk_manager.count_open()
         )
 
+        # Refresh prices for GUI ticker
+        prices: Dict[str, float] = {}
+        for pair in config.trading_pairs:
+            p = self.collector.get_current_price(pair)
+            if p:
+                prices[pair] = p
+        if prices:
+            self._last_prices = prices
+            if self.gui:
+                self.gui.update_prices(prices)
+
         for pair in config.trading_pairs:
             try:
                 self._process_pair(pair, portfolio_usd)
             except Exception as e:
                 logger.error("Error processing %s: %s", pair, e)
+
+        # Push stats to GUI
+        self._push_gui_stats(portfolio_usd)
 
     def _process_pair(self, product_id: str, portfolio_usd: float) -> None:
         # 1. Monitor existing position for TP/SL
@@ -181,6 +201,13 @@ class TradingEngine:
             self.paper_positions[params.product_id] = PaperPosition(params)
             self.risk_manager.register_position(params)
             self._log_trade("ENTER", params, params.entry_price, "paper")
+            self._gui_log(
+                f"[ENTRY] {params.side} {params.product_id} @ {params.entry_price:.4f} "
+                f"SL={params.stop_loss:.4f} TP={params.take_profit:.4f} "
+                f"${params.position_size_quote:.2f} conf={params.confidence:.2%}", "ENTRY"
+            )
+            if self.gui:
+                self.gui.update_positions()
             return
 
         try:
@@ -232,6 +259,12 @@ class TradingEngine:
             self.paper_positions.pop(product_id, None)
             self.risk_manager.close_position(product_id)
             self._log_trade("EXIT", position, current_price, reason, pnl_pct=pnl_pct)
+            self._gui_log(
+                f"[EXIT] {product_id} {reason} @ {current_price:.4f}  P&L={pnl_pct:+.2f}%", "EXIT"
+            )
+            if self.gui:
+                self.gui.update_positions()
+                self.gui.update_history()
             return
 
         # Calculate base size to sell
@@ -332,3 +365,55 @@ class TradingEngine:
             "Stats: %d trades | win_rate=%.1f%% | avg_win=%.2f%% | avg_loss=%.2f%%",
             len(exits), win_rate, avg_win, avg_loss,
         )
+
+    # ------------------------------------------------------------------
+    # GUI bridge helpers
+    # ------------------------------------------------------------------
+
+    def _gui_log(self, msg: str, level: str = "INFO") -> None:
+        logger.info(msg)
+        if self.gui:
+            self.gui.append_log(msg, level)
+
+    def _gui_ml_status(self, status: str, detail: str = "") -> None:
+        if self.gui:
+            self.gui.update_ml_status(status, detail)
+
+    def _push_gui_stats(self, portfolio_usd: float) -> None:
+        if not self.gui:
+            return
+        exits = [t for t in self._trade_log if t["action"] == "EXIT" and t.get("pnl_pct") is not None]
+        wins = [t for t in exits if t["pnl_pct"] > 0]
+        losses = [t for t in exits if t["pnl_pct"] <= 0]
+        win_rate = len(wins) / max(len(exits), 1) * 100
+        total_pnl = sum(t["pnl_pct"] / 100 * t.get("size_usd", 0) for t in exits)
+        avg_win = sum(t["pnl_pct"] for t in wins) / max(len(wins), 1)
+        avg_loss = sum(t["pnl_pct"] for t in losses) / max(len(losses), 1)
+        profit_factor = (
+            abs(sum(t["pnl_pct"] for t in wins)) / max(abs(sum(t["pnl_pct"] for t in losses)), 0.001)
+        )
+        self.gui.update_stats(
+            balance=portfolio_usd + total_pnl,
+            pnl=total_pnl,
+            win_rate=win_rate,
+            trades=len(exits),
+            fees=self._total_fees,
+        )
+        self.gui.update_perf({
+            "_perf_trades":  str(len(exits)),
+            "_perf_winrate": f"{win_rate:.1f}%",
+            "_perf_avg_win": f"{avg_win:+.2f}%",
+            "_perf_avg_loss": f"{avg_loss:+.2f}%",
+            "_perf_pf":      f"{profit_factor:.2f}",
+            "_perf_sharpe":  "—",
+            "_perf_mdd":     "—",
+            "_perf_exp":     f"${total_pnl / max(len(exits), 1):.2f}",
+        })
+        self.gui.update_learn_status(len(wins), len(losses), 0)
+
+    def _ml_detail_str(self) -> str:
+        parts = []
+        for pair, model in self.trainer.models.items():
+            short = pair.replace("-USD", "")
+            parts.append(f"{short}: {'✓' if model and model.is_trained else '…'}")
+        return " | ".join(parts) if parts else "No models loaded"

@@ -28,14 +28,16 @@ MODEL_PATH = os.path.join("saved_models", "lstm_model.keras")
 class LSTMModel:
     def __init__(self) -> None:
         if not HAS_TF:
-            raise ImportError("TensorFlow is required for LSTMModel. Install with: pip install tensorflow")
-        self.model: Optional[keras.Model] = None
+            logger.warning("TensorFlow not installed — LSTM disabled. Bot will run on XGBoost+LightGBM+RF ensemble.")
+        self.model: Optional["keras.Model"] = None
         self.lookback = config.lstm_lookback
         self.units = config.lstm_units
         self.dropout = config.lstm_dropout
         self._is_trained = False
 
     def build(self, n_features: int) -> None:
+        if not HAS_TF:
+            return
         inp = keras.Input(shape=(self.lookback, n_features))
 
         # First LSTM layer — return sequences for stacking
@@ -76,6 +78,8 @@ class LSTMModel:
         logger.info("LSTM built: lookback=%d, features=%d, units=%d", self.lookback, n_features, self.units)
 
     def train(self, X_train: np.ndarray, y_train: np.ndarray, X_val: np.ndarray, y_val: np.ndarray) -> dict:
+        if not HAS_TF:
+            return {}
         if self.model is None:
             self.build(X_train.shape[2])
 
@@ -115,18 +119,20 @@ class LSTMModel:
         return history.history
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        if self.model is None or not self._is_trained:
-            raise RuntimeError("Model not trained. Call train() first.")
+        if not HAS_TF or self.model is None or not self._is_trained:
+            raise RuntimeError("LSTM not available.")
         probs = self.model.predict(X, verbose=0).flatten()
         return probs
 
     def save(self, path: str = MODEL_PATH) -> None:
-        if self.model:
+        if HAS_TF and self.model:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             self.model.save(path)
             logger.info("LSTM saved to %s", path)
 
     def load(self, path: str = MODEL_PATH) -> bool:
+        if not HAS_TF:
+            return False
         if os.path.exists(path):
             self.model = keras.models.load_model(path)
             self._is_trained = True
