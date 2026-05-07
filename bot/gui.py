@@ -61,11 +61,14 @@ class BotGUI:
         self.engine = engine
         self._queue: queue.Queue = queue.Queue()
         self._running = False
-        self._selected_pair = tk.StringVar()
-        self._param_vars: Dict[str, tk.Variable] = {}
         self._log_lines: List[str] = []
 
+        # Tk root MUST exist before any tk.Variable is created
         self.root = tk.Tk()
+
+        self._selected_pair = tk.StringVar()
+        self._param_vars: Dict[str, tk.Variable] = {}
+
         self._setup_root()
         self._build_ui()
         self._apply_theme()
@@ -614,10 +617,10 @@ class BotGUI:
         else:
             self._pos_empty.pack_forget()
 
-        prices = {}
+        # Use cached prices — no network calls from the GUI thread
+        cached = getattr(self.engine, "_last_prices", {})
         for pid, p in positions.items():
-            cur = self.engine.collector.get_current_price(pid) or p.entry_price
-            prices[pid] = cur
+            cur = cached.get(pid, p.entry_price)
             unr = (cur - p.entry_price) / p.entry_price * 100 * (1 if p.side == "BUY" else -1)
             tag = "pos" if unr >= 0 else "neg"
             tree.insert("", "end", values=(

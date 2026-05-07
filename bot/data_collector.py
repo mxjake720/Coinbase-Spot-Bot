@@ -31,7 +31,7 @@ class DataCollector:
         self, product_id: str, granularity: int = 3600, n_candles: int = 500
     ) -> pd.DataFrame:
         """
-        Fetches up to n_candles OHLCV candles by making multiple API calls if needed.
+        Fetches up to n_candles OHLCV candles by paginating backwards in time.
         Returns a DataFrame with columns: [open, high, low, close, volume] indexed by datetime.
         """
         all_candles: List[Dict] = []
@@ -42,11 +42,18 @@ class DataCollector:
             batch = min(remaining, CANDLE_LIMIT_PER_REQUEST)
             start_time = end_time - granularity * batch
             try:
-                raw = self.client.get_candles(product_id, granularity=granularity, limit=batch)
+                raw = self.client.get_candles(
+                    product_id,
+                    granularity=granularity,
+                    start=start_time,
+                    end=end_time,
+                )
                 if not raw:
                     break
+                # Prepend older candles to the front
                 all_candles = raw + all_candles
-                end_time = start_time - granularity
+                # Move the window one candle further back for next batch
+                end_time = start_time - 1
                 remaining -= batch
                 if len(raw) < batch:
                     break

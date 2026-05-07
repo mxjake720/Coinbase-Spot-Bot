@@ -78,17 +78,25 @@ class CoinbaseClient:
     # ------------------------------------------------------------------
 
     def get_candles(
-        self, product_id: str, granularity: int = 3600, limit: int = 300
+        self,
+        product_id: str,
+        granularity: int = 3600,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        limit: int = 300,
     ) -> List[Dict]:
         """
         Returns OHLCV candles sorted oldest→newest.
         granularity in seconds: 60, 300, 900, 3600, 21600, 86400
+        If start/end are not supplied they default to the most recent `limit` candles.
         """
-        end_time = int(time.time())
-        start_time = end_time - granularity * limit
+        if end is None:
+            end = int(time.time())
+        if start is None:
+            start = end - granularity * limit
         params = {
-            "start": str(start_time),
-            "end": str(end_time),
+            "start": str(start),
+            "end": str(end),
             "granularity": _granularity_to_str(granularity),
         }
         resp = self._request("GET", f"/api/v3/brokerage/products/{product_id}/candles", params=params)

@@ -8,15 +8,12 @@ Ensemble model combining:
 Final signal = weighted soft-voting across all models.
 """
 import os
-import pickle
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import RobustScaler
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import cross_val_score
 import joblib
 
 try:
@@ -77,7 +74,6 @@ class EnsembleModel:
                 gamma=0.1,
                 reg_alpha=0.1,
                 reg_lambda=1.0,
-                use_label_encoder=False,
                 eval_metric="logloss",
                 random_state=42,
                 n_jobs=-1,

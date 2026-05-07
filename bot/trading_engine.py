@@ -371,9 +371,14 @@ class TradingEngine:
     # ------------------------------------------------------------------
 
     def _gui_log(self, msg: str, level: str = "INFO") -> None:
-        logger.info(msg)
-        if self.gui:
-            self.gui.append_log(msg, level)
+        # The logger is patched by main.py to mirror into the GUI panel;
+        # avoid calling gui.append_log directly to prevent duplicate entries.
+        if level == "WARNING":
+            logger.warning(msg)
+        elif level == "ERROR":
+            logger.error(msg)
+        else:
+            logger.info(msg)
 
     def _gui_ml_status(self, status: str, detail: str = "") -> None:
         if self.gui:
